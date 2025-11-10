@@ -120,7 +120,7 @@ class BodyMeasureApp(App):
         main_layout.add_widget(self.reset_buffer_btn)
 
         # === Kamera capture ===
-        self.capture = cv2.VideoCapture(1)
+        self.capture = cv2.VideoCapture(0)
         Clock.schedule_interval(self.update, 1.0 / 30.0)
 
         self.pose_valid = False
@@ -462,7 +462,7 @@ class BodyMeasureApp(App):
         manual_norm = {k.lower(): v for k, v in manual.items()}
 
         for key in manual_norm:
-            if key != 'nama' :
+            if key != 'nama' and key != 'nrp' :
                 manual_val = manual_norm[key]
                 app_val = appUkur_norm[key]
 
@@ -777,6 +777,7 @@ class BodyMeasureApp(App):
 
         # Field sesuai dictionary manual
         fields = [
+            "NRP",
             "Nama",
             "Panjang badan",
             "Lebar dada",
@@ -820,7 +821,7 @@ class BodyMeasureApp(App):
         def start_measurement(instance):
             self.manual_values = {}
             for k, v in self.manual_inputs.items():
-                if k != 'Nama' :
+                if k != 'Nama' and k != 'NRP' :
                     try:
                         self.manual_values[k] = float(v.text)
                     except ValueError:
@@ -943,13 +944,14 @@ class BodyMeasureApp(App):
         """
         correction = {}
         corrected = {}
+        debug_data = []  # 🧠 kumpulkan semua data debug
 
         # Normalisasi key
         appUkur_norm = {k.lower(): v for k, v in appUkur.items()}
         manual_norm = {k.lower(): v for k, v in manual.items()}
 
         for key in manual_norm.keys():
-            if key != 'nama':
+            if key != 'nama' and 'NRP':
                 if key in appUkur_norm:
                     app_val = appUkur_norm[key]
                     manual_val = manual_norm[key]
@@ -979,8 +981,18 @@ class BodyMeasureApp(App):
 
                     print(f"[DEBUG] {key}: manual={manual_val}, app={app_val}, diff={diff:.2f}, "
                         f"rate={correction_rate:.2f}, applied={applied_correction:.2f}, corrected={corrected_val:.2f}")
+                     # 🧩 Simpan data debug dalam dict untuk export nanti
+                    debug_data.append({
+                        "Field": key,
+                        "Manual (cm)": manual_val,
+                        "App (cm)": app_val,
+                        "Diff (cm)": round(diff, 2),
+                        "Rate": correction_rate,
+                        "Applied Correction": round(applied_correction, 2),
+                        "Corrected Value (cm)": round(corrected_val, 2)
+                    })
 
-        return corrected, correction
+        return corrected, correction, debug_data
 
 
 
@@ -1210,7 +1222,6 @@ class BodyMeasureApp(App):
         panjang_tangan_panjang *= 0.95
         panjang_tangan_panjang = self.smooth_value("panjang_tangan_panjang", panjang_tangan_panjang)
         
-        
         panjang_celana = self.calc_panjang_celana(lm, h, scale)
         panjang_celana = self.smooth_value("panjang_celana", panjang_celana)
         
@@ -1236,7 +1247,7 @@ class BodyMeasureApp(App):
             "Panjang celana": round(panjang_celana, 1),
         }
         
-        corrected_app, correction_model = self.apply_adaptive_correction(appUkur, manualValues)
+        corrected_app, correction_model, debug_data_logs = self.apply_adaptive_correction(appUkur, manualValues)
 
         data_export = []
         hasil_persentase, rata_error, rata_akurasi = self.hitung_akurasi(manualValues, corrected_app)
@@ -1250,16 +1261,18 @@ class BodyMeasureApp(App):
                 "Akurasi (%)": val['akurasi']
             })
             
-        # Tambahkan nama sebagai kolom tambahan untuk setiap baris
+       # Tambahkan nama sebagai kolom tambahan untuk setiap baris
         for row in data_export:
             row["Nama"] = manualValues["Nama"]
+            row["NRP"] = manualValues["NRP"]
 
-        # Buat DataFrame
+        # Buat DataFrame utama
         df = pd.DataFrame(data_export)
 
-        # Tambahkan baris summary di akhir (opsional)
+        # Tambahkan baris summary di akhir
         summary_row = {
             "Nama": manualValues["Nama"],
+            "NRP": manualValues["NRP"],
             "Field": "--- Ringkasan ---",
             "Ukuran Asli (cm)": "",
             "App (cm)": "",
@@ -1269,16 +1282,25 @@ class BodyMeasureApp(App):
         }
         df = pd.concat([df, pd.DataFrame([summary_row])], ignore_index=True)
 
-        # Export ke CSV
-        df.to_csv(f"hasil_ukur_{manualValues['Nama']}.csv", index=False)
+        # ====== 🧠 Bagian Export Multi-Sheet ke Excel ======
 
-        # Export ke Excel
-        df.to_excel(f"hasil_ukur_{manualValues['Nama']}.xlsx", index=False)
+        df_debug = pd.DataFrame(debug_data_logs)
+        df_debug["Nama"] = manualValues["Nama"]
+        df_debug["NRP"] = manualValues["NRP"]
 
-        print("Export selesai: hasil_ukur.csv / hasil_ukur.xlsx")
+        # Path file Excel
+        excel_path = f"hasil_ukur_{manualValues['Nama']}.xlsx"
+
+        # Tulis ke dua sheet dalam satu file Excel
+        with pd.ExcelWriter(excel_path, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name="Hasil Akurasi")
+            df_debug.to_excel(writer, index=False, sheet_name="Debug Koreksi")
+
+        print(f"✅ Export selesai: {excel_path}")
         
         
         detail_str = ""
+        detail_str += f'NRP : {manualValues["NRP"]} \n'
         detail_str += f'Nama : {manualValues["Nama"]} \n'
         for key, val in hasil_persentase.items():
             detail_str += (
