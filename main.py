@@ -16,6 +16,8 @@ from kivy.uix.popup import Popup
 from kivy.uix.textinput import TextInput
 import time
 import pandas as pd
+import os
+from datetime import datetime
 
 mp_pose = mp.solutions.pose
 pose = mp_pose.Pose(
@@ -189,6 +191,64 @@ class BodyMeasureApp(App):
         self.reset_buffer_btn.disabled = True
         self.captured_frame = None
 
+    def save_captured_image(self, frame):
+        """
+        Menyimpan gambar hasil tangkapan ke folder 'captured_images'
+        dengan nama file berdasarkan timestamp dan nama user
+        """
+        # Buat folder jika belum ada
+        folder_name = "captured_images"
+        if not os.path.exists(folder_name):
+            os.makedirs(folder_name)
+        
+        # Dapatkan nama user jika tersedia
+        user_name = getattr(self, "manual_values", {}).get("Nama", "Unknown")
+        user_nrp = getattr(self, "manual_values", {}).get("NRP", "000")
+        
+        # Bersihkan nama file dari karakter yang tidak valid
+        user_name_clean = "".join(c for c in user_name if c.isalnum() or c in (' ', '_', '-')).strip()
+        user_name_clean = user_name_clean.replace(' ', '_')
+        
+        # Format nama file: NRP_Nama_YYYYMMDD_HHMMSS.jpg
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{user_nrp}_{user_name_clean}_{timestamp}.jpg"
+        filepath = os.path.join(folder_name, filename)
+        
+        # Simpan gambar
+        cv2.imwrite(filepath, frame)
+        print(f"✅ Gambar berhasil disimpan: {filepath}")
+        
+        # Tampilkan notifikasi popup
+        self.show_save_notification(filepath)
+        
+        return filepath
+    
+    def show_save_notification(self, filepath):
+        """Tampilkan popup notifikasi bahwa gambar telah disimpan"""
+        content = BoxLayout(orientation='vertical', spacing=10, padding=10)
+        content.add_widget(Label(
+            text=f"Gambar berhasil disimpan!\n\nLokasi:\n{filepath}",
+            halign="center",
+            valign="middle"
+        ))
+        
+        btn_ok = Button(
+            text="OK", 
+            size_hint=(1, 0.3),
+            background_color=(0.1, 0.6, 0.1, 1)
+        )
+        content.add_widget(btn_ok)
+        
+        popup = Popup(
+            title="Gambar Tersimpan",
+            content=content,
+            size_hint=(0.7, 0.4),
+            auto_dismiss=False
+        )
+        
+        btn_ok.bind(on_press=popup.dismiss)
+        popup.open()
+
     def euclidean(self, p1, p2, w, h, scale):
         x1, y1 = int(p1.x * w), int(p1.y * h)
         x2, y2 = int(p2.x * w), int(p2.y * h)
@@ -359,6 +419,9 @@ class BodyMeasureApp(App):
                         self.reset_buffer_btn.disabled = False
                          # freeze frame
                         self.captured_frame = frame.copy()
+                        
+                        # Simpan gambar captured
+                        self.save_captured_image(frame)
 
             # --- gambar landmark ---
             for idx, landmark in enumerate(lm):
